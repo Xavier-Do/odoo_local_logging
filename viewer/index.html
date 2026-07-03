@@ -1,0 +1,2521 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Log Viewer</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="theme-color" content="#11161d">
+<style>
+  :root{
+    --bg:#0d1117;
+    --panel:#11161d;
+    --border:#232b36;
+    --text:#c9d1d9;
+    --dim:#6e7681;
+    --accent:#58a6ff;
+    --debug:#6e7681;
+    --info:#3fb950;
+    --warning:#d29922;
+    --error:#f85149;
+    --critical:#ff5ecb;
+    --custom:#d2a8ff;
+  }
+  *{box-sizing:border-box;}
+  html,body{height:100%;}
+  body{
+    margin:0;
+    background:var(--bg);
+    color:var(--text);
+    font-family: ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+    font-size:13px;
+    display:flex;
+    flex-direction:column;
+  }
+
+  /* --- Toolbar --- */
+  #toolbar{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    padding:10px 14px;
+    background:var(--panel);
+    border-bottom:1px solid var(--border);
+    position:sticky;
+    top:0;
+    z-index:6;
+    flex-wrap:wrap;
+  }
+  #toolbar .title{
+    font-weight:600;
+    color:#e6edf3;
+    letter-spacing:0.02em;
+    margin-right:4px;
+  }
+  #toolbar .title .dot{color:var(--info);}
+  input[type=text]{
+    background:#0a0e13;
+    border:1px solid var(--border);
+    color:var(--text);
+    padding:6px 10px;
+    border-radius:6px;
+    font-family:inherit;
+    font-size:13px;
+    outline:none;
+    min-width:220px;
+  }
+  input[type=text]:focus{border-color:var(--accent);}
+  select{
+    background:#0a0e13;
+    border:1px solid var(--border);
+    color:var(--text);
+    padding:6px 8px;
+    border-radius:6px;
+    font-family:inherit;
+    font-size:13px;
+  }
+  label.file-btn{
+    background:#1c2733;
+    border:1px solid var(--border);
+    color:var(--text);
+    padding:6px 12px;
+    border-radius:6px;
+    cursor:pointer;
+    white-space:nowrap;
+  }
+  label.file-btn:hover{border-color:var(--accent);}
+  #fileInput{display:none;}
+  #stats{
+    margin-left:auto;
+    color:var(--dim);
+    white-space:nowrap;
+  }
+  #stats b{color:var(--text);}
+
+  .check-inline{
+    display:flex;
+    align-items:center;
+    gap:5px;
+    color:var(--dim);
+    font-size:12px;
+    cursor:pointer;
+    white-space:nowrap;
+  }
+  .check-inline input{accent-color:var(--accent); cursor:pointer;}
+  .check-inline input:disabled{cursor:not-allowed;}
+  .check-inline:has(input:disabled){opacity:0.4; cursor:not-allowed;}
+  #watchStatus{color:var(--dim); font-size:11px; white-space:nowrap;}
+  #watchSuggestBtn{
+    position:fixed;
+    bottom:22px;
+    left:50%;
+    transform:translateX(-50%);
+    z-index:50;
+    display:flex;
+    align-items:center;
+    gap:6px;
+    background:var(--panel);
+    border:1px solid var(--info);
+    color:var(--info);
+    padding:8px 18px;
+    border-radius:20px;
+    font-family:inherit;
+    font-size:13px;
+    font-weight:600;
+    cursor:pointer;
+    box-shadow:0 6px 20px rgba(0,0,0,0.5);
+  }
+  #watchSuggestBtn:hover{background:rgba(63,185,80,0.14);}
+  #watchSuggestBtn.hidden{display:none;}
+
+  /* --- Drop zone / empty state --- */
+  #dropzone{
+    flex:1;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    color:var(--dim);
+    text-align:center;
+    padding:40px;
+  }
+  #dropzone.hidden{display:none;}
+  #dropzone .box{
+    border:1px dashed var(--border);
+    border-radius:10px;
+    padding:40px 60px;
+  }
+  #dropzone .box b{color:var(--text);}
+
+  /* --- Log table --- */
+  #wrap{flex:1; overflow:auto; display:none; padding-bottom:64px;}
+  #wrap.visible{display:block;}
+  table{width:100%; border-collapse:collapse; table-layout:fixed;}
+  thead th{
+    position:sticky; top:0;
+    background:var(--panel);
+    text-align:left;
+    padding:4px 6px;
+    border-bottom:1px solid var(--border);
+    vertical-align:middle;
+    z-index:4;
+  }
+  thead th.th-text{
+    color:var(--dim);
+    font-weight:500;
+    font-size:11px;
+    text-transform:uppercase;
+    letter-spacing:0.05em;
+    padding:6px 10px;
+  }
+  tbody tr.row{
+    border-bottom:1px solid #171d26;
+  }
+  tbody tr.row:hover{background:#131a22;}
+  tbody tr.row td{
+    padding:5px 10px;
+    vertical-align:top;
+    white-space:nowrap;
+    overflow:hidden;
+    text-overflow:ellipsis;
+  }
+  td.msg{color:#dbe2ea; position:relative;}
+  a.tb-link{
+    color:var(--accent);
+    text-decoration:underline;
+    text-decoration-style:dotted;
+    text-underline-offset:2px;
+    cursor:pointer;
+  }
+  a.tb-link:hover{color:#8ec5ff;}
+  /* Truncated (default): a single ellipsized line, so one giant message
+     (a traceback, an unbroken long string) can't blow out the row height
+     or force horizontal scrolling. The max-width:0/width:100% combo is the
+     standard trick for truncating a flexible column in an auto-layout table. */
+  td.msg.truncated{
+    max-width:0;
+    width:100%;
+    white-space:nowrap;
+    overflow:hidden;
+    text-overflow:ellipsis;
+    cursor:pointer;
+  }
+  td.msg.truncated.overflowing{padding-right:22px;}
+  td.msg.truncated.overflowing::after{
+    content:'⋯';
+    position:absolute;
+    right:6px;
+    top:50%;
+    transform:translateY(-50%);
+    color:var(--accent);
+    font-weight:700;
+    pointer-events:none;
+  }
+  /* Expanded (click to toggle): show everything, wrapping instead of
+     overflowing horizontally. */
+  td.msg.expanded{
+    white-space:pre-wrap;
+    word-break:break-word;
+    overflow-wrap:anywhere;
+  }
+  td.msg.clickable{cursor:pointer;}
+  td.time{color:var(--dim); cursor:context-menu;}
+  tr.row:hover td.time{color:var(--text);}
+  td.logger{color:#8fa1b3;}
+  td.expand{padding:5px 8px; text-align:center;}
+  .expand-btn{
+    background:none;
+    border:1px solid var(--border);
+    color:var(--dim);
+    border-radius:5px;
+    width:22px;
+    height:22px;
+    line-height:1;
+    font-family:inherit;
+    font-size:12px;
+    cursor:pointer;
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+  }
+  .expand-btn:hover{color:var(--text); border-color:var(--accent);}
+
+  td.vscode-cell{padding:5px 8px; text-align:center;}
+  .vscode-btn{
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    width:24px;
+    height:22px;
+    border:1px solid var(--border);
+    border-radius:5px;
+    color:var(--accent);
+    background:none;
+    text-decoration:none;
+    font-size:11px;
+    font-weight:700;
+    font-family:inherit;
+    cursor:pointer;
+  }
+  .vscode-btn:hover{border-color:var(--accent); background:rgba(88,166,255,0.12);}
+  .expand-btn.open{color:var(--accent); border-color:var(--accent);}
+
+  .badge{
+    display:inline-block;
+    padding:1px 7px;
+    border-radius:10px;
+    font-size:11px;
+    font-weight:600;
+    letter-spacing:0.03em;
+  }
+  .lvl-DEBUG{color:var(--debug); border:1px solid var(--debug);}
+  .lvl-INFO{color:var(--info); border:1px solid var(--info);}
+  .lvl-WARNING{color:var(--warning); border:1px solid var(--warning);}
+  .lvl-ERROR{color:var(--error); border:1px solid var(--error);}
+  .lvl-CRITICAL{color:var(--critical); border:1px solid var(--critical); background:rgba(255,94,203,0.08);}
+  .lvl-RUNBOT{color:var(--accent); border:1px solid var(--accent); background:rgba(88,166,255,0.08);}
+
+  tr.row.lvl-WARNING{box-shadow: inset 3px 0 0 var(--warning);}
+  tr.row.lvl-ERROR{box-shadow: inset 3px 0 0 var(--error);}
+  tr.row.lvl-CRITICAL{box-shadow: inset 3px 0 0 var(--critical);}
+  tr.row.lvl-RUNBOT{box-shadow: inset 3px 0 0 var(--accent);}
+
+  /* While following, the true last line is always shown below the filtered
+     ones (even if the filters would otherwise hide it), dimmed, as a
+     lightweight sign that lines are still arriving. */
+  tr.row.pinned-last{
+    opacity:0.5;
+    border-top:1px dashed var(--border);
+  }
+  tr.row.pinned-last:hover{opacity:0.85;}
+
+  tr.detail td{
+    background:#0a0e13;
+    padding:10px 10px 14px 10px;
+    border-bottom:1px solid var(--border);
+  }
+  tr.detail pre{
+    margin:0;
+    white-space:pre-wrap;
+    word-break:break-word;
+    color:#9fb0c0;
+    font-size:12px;
+  }
+  tr.detail.hidden{display:none;}
+
+  /* --- Multi-select filter dropdowns (columns picker + per-column filters) --- */
+  .filter-wrap{position:relative; display:inline-block;}
+  .filter-btn{
+    background:#0a0e13;
+    border:1px solid var(--border);
+    color:var(--text);
+    padding:6px 10px;
+    border-radius:6px;
+    font-family:inherit;
+    font-size:13px;
+    cursor:pointer;
+    white-space:nowrap;
+    max-width:220px;
+    overflow:hidden;
+    text-overflow:ellipsis;
+  }
+  .filter-btn:hover{border-color:var(--accent);}
+  /* In table headers (unlike the toolbar), the wrap should exactly match
+     its fixed column width, so the button's own overflow:hidden/ellipsis
+     reliably kicks in instead of being clipped by the column boundary
+     with no ellipsis at all. */
+  thead .filter-wrap{display:block; width:100%;}
+  thead .filter-btn{display:block; width:100%; max-width:none; box-sizing:border-box;}
+  thead .message-search-input{
+    display:block;
+    width:100%;
+    min-width:0;
+    box-sizing:border-box;
+    padding:5px 8px;
+    font-size:12px;
+  }
+  .filter-btn.has-default{
+    border-color:var(--custom);
+    box-shadow:0 0 0 1px var(--custom) inset;
+  }
+
+  /* --- Bar showing filters that are active but whose column is hidden --- */
+  .hidden-filters-bar{
+    display:flex;
+    flex-wrap:wrap;
+    align-items:center;
+    gap:8px;
+    padding:8px 14px;
+    background:#0d1420;
+    border-bottom:1px solid var(--border);
+  }
+  .hidden-filters-bar.hidden{display:none;}
+  .hidden-filters-bar .bar-label{color:var(--dim); font-size:11px; margin-right:2px;}
+  .filter-panel-actions .fp-showcol{color:var(--info); border-color:rgba(63,185,80,0.4);}
+  .filter-panel-actions .fp-showcol:hover{border-color:var(--info);}
+  .filter-panel-actions .fp-remove{color:var(--custom); border-color:rgba(210,168,255,0.4);}
+  .filter-panel-actions .fp-remove:hover{border-color:var(--custom);}
+
+  .filter-panel{
+    position:absolute;
+    top:calc(100% + 6px);
+    left:0;
+    background:var(--panel);
+    border:1px solid var(--border);
+    border-radius:8px;
+    padding:8px;
+    min-width:200px;
+    max-width:320px;
+    max-height:320px;
+    overflow-y:auto;
+    z-index:10;
+    box-shadow:0 8px 24px rgba(0,0,0,0.4);
+  }
+  .filter-panel.hidden{display:none;}
+  /* The Columns picker can list and drag-reorder every field in the file —
+     the shared 320px cap makes that painfully cramped. Scoped to just this
+     one dropdown; every other filter panel keeps the compact default. */
+  #columnsFilterWrap .filter-panel{
+    max-height:calc(100vh - 100px);
+  }
+  .filter-panel-actions{
+    display:flex;
+    align-items:center;
+    flex-wrap:wrap;
+    gap:6px;
+    margin-bottom:6px;
+    padding-bottom:6px;
+    border-bottom:1px solid var(--border);
+  }
+  .filter-panel-actions button{
+    background:none;
+    border:1px solid var(--border);
+    color:var(--dim);
+    border-radius:5px;
+    padding:2px 8px;
+    font-size:11px;
+    font-family:inherit;
+    cursor:pointer;
+  }
+  .filter-panel-actions button:hover{color:var(--text); border-color:var(--accent);}
+  .filter-panel-actions .fp-save{color:var(--accent); border-color:rgba(88,166,255,0.4);}
+  .filter-panel-actions .fp-save:hover{border-color:var(--accent);}
+  .filter-panel-actions .fp-clear{color:var(--custom); border-color:rgba(210,168,255,0.4);}
+  .filter-panel-actions .fp-clear:hover{border-color:var(--custom);}
+  .filter-panel-actions .fp-clear:disabled{
+    opacity:0.35;
+    cursor:not-allowed;
+    color:var(--dim);
+    border-color:var(--border);
+  }
+  .filter-panel-actions .fp-clear:disabled:hover{border-color:var(--border);}
+  .filter-panel-actions .fp-toggle{
+    display:flex;
+    align-items:center;
+    gap:5px;
+    color:var(--dim);
+    font-size:11px;
+    cursor:pointer;
+    white-space:nowrap;
+  }
+  .filter-panel-actions .fp-toggle input{accent-color:var(--accent); cursor:pointer;}
+  .filter-panel-actions .hint{
+    flex-basis:100%;
+    margin-left:0;
+    margin-top:2px;
+    color:var(--dim);
+    font-size:10px;
+    white-space:nowrap;
+  }
+  .filter-row{
+    display:flex;
+    align-items:center;
+    gap:7px;
+    padding:4px 8px;
+    border-radius:5px;
+    cursor:pointer;
+    white-space:nowrap;
+    user-select:none;
+    border:1px solid transparent;
+  }
+  .filter-row:hover{background:#1a222d;}
+  .filter-row.selected{
+    background:rgba(88,166,255,0.12);
+    border-color:var(--accent);
+    color:#e6edf3;
+  }
+  .filter-row .count{color:var(--dim); margin-left:auto; font-size:11px; padding-left:10px; flex-shrink:0;}
+  .filter-row .row-label{
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+    min-width:0;
+    flex:1;
+  }
+  .filter-row .drag-handle{
+    color:var(--dim);
+    cursor:grab;
+    font-size:11px;
+    letter-spacing:-1px;
+    margin-right:-2px;
+    flex-shrink:0;
+  }
+  .filter-row .rename-btn{
+    flex-shrink:0;
+    background:none;
+    border:none;
+    color:var(--dim);
+    cursor:pointer;
+    font-size:11px;
+    padding:2px 4px;
+    border-radius:4px;
+    font-family:inherit;
+  }
+  .filter-row .rename-btn:hover{color:var(--accent); background:rgba(88,166,255,0.12);}
+  .filter-row.dragging{opacity:0.4;}
+  #columnsFilterWrap .filter-row{cursor:grab;}
+  #columnsFilterWrap .filter-row:active{cursor:grabbing;}
+
+  .time-range-fields{
+    display:flex;
+    flex-direction:column;
+    gap:8px;
+    padding:2px 2px 4px;
+  }
+  .time-range-fields label{
+    display:flex;
+    flex-direction:column;
+    gap:3px;
+    font-size:11px;
+    color:var(--dim);
+  }
+  .time-range-fields .hint{
+    color:var(--dim);
+    font-size:10px;
+    margin-top:2px;
+  }
+  .time-range-fields input[type=text]{
+    background:#0a0e13;
+    border:1px solid var(--border);
+    color:var(--text);
+    padding:5px 7px;
+    border-radius:5px;
+    font-family:inherit;
+    font-size:12px;
+  }
+  .time-range-fields input[type=text]:focus{border-color:var(--accent); outline:none;}
+  .time-range-fields input.invalid{border-color:var(--error);}
+
+  /* --- Row right-click context menu (set time-range from a log line) --- */
+  #rowContextMenu{
+    position:fixed;
+    background:var(--panel);
+    border:1px solid var(--border);
+    border-radius:8px;
+    padding:4px;
+    min-width:180px;
+    z-index:100;
+    box-shadow:0 8px 24px rgba(0,0,0,0.5);
+  }
+  #rowContextMenu.hidden{display:none;}
+  #rowContextMenu button{
+    display:block;
+    width:100%;
+    text-align:left;
+    background:none;
+    border:none;
+    color:var(--text);
+    padding:7px 10px;
+    border-radius:5px;
+    font-family:inherit;
+    font-size:12px;
+    cursor:pointer;
+  }
+  #rowContextMenu button:hover{background:#1a222d; color:var(--accent);}
+  .filter-empty{color:var(--dim); padding:4px;}
+
+  ::-webkit-scrollbar{width:10px; height:10px;}
+  ::-webkit-scrollbar-thumb{background:#232b36; border-radius:6px;}
+  ::-webkit-scrollbar-track{background:var(--bg);}
+</style>
+</head>
+<body>
+
+<div id="toolbar">
+  <span class="title">log<span class="dot">·</span>viewer</span>
+  <select id="serverFiles" style="display:none;">
+    <option value="">Select a file on server…</option>
+  </select>
+  <label class="file-btn" for="fileInput">Open local file</label>
+  <input type="file" id="fileInput" accept=".log,.txt,.jsonl,.json">
+  <input type="text" id="customUrlInput" placeholder="…or paste any log URL and press Enter" title="Any URL to a JSON log file, including on a different server — that server must allow cross-origin requests (CORS) for this to work.">
+
+  <div class="filter-wrap" id="columnsFilterWrap">
+    <button type="button" class="filter-btn">Columns: <span class="filter-label">default</span></button>
+    <div class="filter-panel hidden">
+      <div class="filter-panel-actions">
+        <button type="button" class="fp-all">All</button>
+        <button type="button" class="fp-none">None</button>
+        <span class="hint">Click toggles · Shift extends</span>
+      </div>
+      <div class="fp-list"></div>
+    </div>
+  </div>
+
+  <label class="check-inline" title="Poll the file for new lines and auto-scroll to the newest one. Scrolling up stops watching entirely. Needs a file loaded from the server (not a locally opened file).">
+    <input type="checkbox" id="watchToggle" disabled>
+    Watch
+  </label>
+  <div class="filter-wrap" id="watchIntervalWrap">
+    <button type="button" class="filter-btn">Every: <span class="filter-label">1s</span></button>
+    <div class="filter-panel hidden">
+      <div class="filter-panel-actions">
+        <span class="hint">Minimum 0.3s</span>
+      </div>
+      <div class="time-range-fields">
+        <label>Poll interval (seconds)<input type="text" class="watch-interval-input" placeholder="e.g. 1"></label>
+      </div>
+    </div>
+  </div>
+  <span id="watchStatus"></span>
+  <label class="check-inline" title="Truncate long messages to a single line by default (click one to expand it)">
+    <input type="checkbox" id="collapseMsgToggle">
+    Collapse messages
+  </label>
+
+  <span id="stats"></span>
+</div>
+
+<div id="hiddenFiltersBar" class="hidden-filters-bar hidden"></div>
+
+<div id="dropzone">
+  <div class="box">
+    Drop a log file here, or click <b>Open local file</b> above.<br>
+    If served over the nginx config, pick a file from the dropdown, or paste any log URL, instead.<br>
+    Expects one JSON object per line (Python <code>logging</code> style).
+  </div>
+</div>
+
+<div id="wrap">
+  <table>
+    <thead>
+      <tr id="headRow"></tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+</div>
+
+<button type="button" id="watchSuggestBtn" class="hidden" title="Start watching this file for new lines">▶ Watch for updates</button>
+
+<div id="rowContextMenu" class="hidden">
+  <button type="button" data-action="from">Set as range start</button>
+  <button type="button" data-action="to">Set as range end</button>
+</div>
+
+<script>
+let entries = [];
+
+// Loaded automatically on page load, unless a "?log=" URL param overrides it
+// (see the bottom of loadFromServer's setup below).
+const DEFAULT_FILE = 'odoo_log.json';
+
+const LEVELS = ['DEBUG', 'INFO', 'RUNBOT', 'WARNING', 'ERROR', 'CRITICAL'];
+
+// Some levelno values share a levelname but should be treated as distinct
+// severities for filtering/coloring. Odoo's runbot logger uses levelno 25
+// while still reporting levelname "INFO".
+const LEVEL_OVERRIDES = { 25: 'RUNBOT' };
+
+// Distinct colors cycled through for pid / thread_native coloring, assigned
+// in order of first appearance in the file (see buildIdColorMap()).
+const ID_COLOR_PALETTE = [
+  '#7ee787', '#79c0ff', '#ffa657', '#d2a8ff', '#f2cc60',
+  '#ff9bce', '#56d4dd', '#bdadff', '#ff7b72', '#a5d6ff',
+];
+
+let pidColorMap = new Map();    // toKey(process) -> color
+let threadColorMap = new Map(); // toKey(thread_native) -> color
+
+function buildIdColorMap(field){
+  const map = new Map();
+  const order = fieldValueOrder.get(field) || [];
+  order.forEach((key, i) => map.set(key, ID_COLOR_PALETTE[i % ID_COLOR_PALETTE.length]));
+  return map;
+}
+
+// Known fields, in preferred display order, with pretty labels and
+// optional custom cell formatting / fixed column width.
+// "textual: true" marks a column that never gets a value filter dropdown
+// (either because it's free text, like Message, or because it's a computed
+// per-row action/display with no meaningful set of values to filter on).
+const FIELD_META = {
+  __vscode:        { label: 'Code', width: '46px', textual: true, format: v => {
+    return `<a class="vscode-btn" href="${escapeHtml(v)}" title="Open in VS Code">{ }</a>`;
+  } },
+  __test:          { label: 'Test', width: '46px', textual: true, format: v => {
+    const idx = v.indexOf(':');
+    const testId = idx === -1 ? '' : v.slice(idx + 1);
+    const copyText = v;
+    const title = testId ? `Copy to clipboard (${testId})` : 'Copy to clipboard';
+    return `<button type="button" class="vscode-btn test-copy-btn" data-copy="${escapeHtml(copyText)}" title="${escapeHtml(title)}">⧉</button>`;
+  } },
+  created:         { label: 'Time',     width: '170px', format: v => fmtTime(v) },
+  __elapsed:       { label: 'Δt (s)',   width: '90px',  textual: true, format: v => {
+    if (typeof v !== 'number') return '';
+    const sign = v < 0 ? '-' : '+';
+    const isSlow = elapsedThreshold !== null && v > elapsedThreshold;
+    const style = isSlow ? 'color:var(--error); font-weight:700;' : 'color:var(--dim);';
+    return `<span style="${style}">${sign}${Math.abs(v).toFixed(3)}s</span>`;
+  } },
+  __level:         { label: 'Level',    width: '110px', format: v => `<span class="badge lvl-${v}">${v}</span>` },
+  levelname:       { label: 'Level name (raw)', width: '130px' },
+  name:            { label: 'Logger',   width: '220px' },
+  process:         { label: 'Pid', width: '90px', format: v => {
+    if (colorizeOff.has('process')) return escapeHtml(String(v));
+    const color = pidColorMap.get(toKey(v)) || 'inherit';
+    return `<span style="color:${color}">${escapeHtml(String(v))}</span>`;
+  } },
+  dbname:          { label: 'Database', width: '130px' },
+  module:          { label: 'Module', width: '140px' },
+  funcName:        { label: 'Function', width: '140px' },
+  filename:        { label: 'File', width: '140px' },
+  pathname:        { label: 'Path', width: '260px' },
+  lineno:          { label: 'Line', width: '70px' },
+  threadName:      { label: 'Thread', width: '110px' },
+  thread:          { label: 'Thread ID', width: '130px' },
+  thread_native:   { label: 'Native TID', width: '110px', format: (v, e) => {
+    if (colorizeOff.has('thread_native')) return escapeHtml(String(v));
+    const samePid = e && e.process !== undefined && toKey(e.process) === toKey(v);
+    const color = samePid ? '#ffffff' : (threadColorMap.get(toKey(v)) || 'inherit');
+    return `<span style="color:${color}">${escapeHtml(String(v))}</span>`;
+  } },
+  processName:     { label: 'Process', width: '120px' },
+  levelno:         { label: 'Level #', width: '80px' },
+  msecs:           { label: 'Msecs', width: '80px' },
+  relativeCreated: { label: 'Rel. created', width: '100px' },
+  args:            { label: 'Args', width: '220px', format: v => Array.isArray(v) ? v.map(x => String(x)).join(', ') : String(v) },
+  msg:             { label: 'Template', width: '200px' },
+  message:         { label: 'Message', textual: true, format: v => linkifyTracebacks(String(v)) },
+};
+const FIELD_ORDER = Object.keys(FIELD_META);
+const DEFAULT_VISIBLE = ['__vscode', 'created', '__level', 'name', 'process', 'message'];
+
+function prettyLabel(field){
+  if (customLabels[field]) return customLabels[field];
+  return (FIELD_META[field] && FIELD_META[field].label) || field;
+}
+
+const fileInput = document.getElementById('fileInput');
+const serverFiles = document.getElementById('serverFiles');
+const dropzone = document.getElementById('dropzone');
+const wrap = document.getElementById('wrap');
+const headRow = document.getElementById('headRow');
+const tbody = document.getElementById('tbody');
+const stats = document.getElementById('stats');
+const watchToggle = document.getElementById('watchToggle');
+const watchStatus = document.getElementById('watchStatus');
+const watchSuggestBtn = document.getElementById('watchSuggestBtn');
+const collapseMsgToggle = document.getElementById('collapseMsgToggle');
+const customUrlInput = document.getElementById('customUrlInput');
+
+// The search query now lives in the Message column's header, not the
+// toolbar — kept as its own variable (rather than reading the input live)
+// because rebuildHeader() recreates that input from scratch on every column
+// change, and needs something durable to restore its value from.
+let searchQuery = '';
+
+const STORAGE_KEY_WATCH_INTERVAL = 'logviewer.watchIntervalMs.v1';
+
+function loadWatchInterval(){
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_WATCH_INTERVAL);
+    if (raw === null) return 1000;
+    const num = JSON.parse(raw);
+    return (typeof num === 'number' && num >= 300) ? num : 1000;
+  } catch (e) { return 1000; }
+}
+
+function saveWatchIntervalToStorage(ms){
+  try { localStorage.setItem(STORAGE_KEY_WATCH_INTERVAL, JSON.stringify(ms)); } catch (e) { /* storage unavailable, ignore */ }
+}
+
+// Watch mode state: only usable for files loaded from the server (we need a
+// URL to re-fetch). rawLogByteLength tracks the exact number of bytes
+// already fetched, so Range requests ask for precisely the new tail.
+// Watch and Follow are one combined thing: checking Watch polls for new
+// lines AND auto-scrolls to them. Scrolling away from the bottom stops the
+// whole thing outright (not just the scrolling) — no point spending network
+// requests and re-rendering the table while you're reading something else.
+let currentServerPath = null;
+let rawLogByteLength = 0;
+let watchTimer = null;
+let watchIntervalMs = loadWatchInterval(); // how often to poll while watching
+let watchInProgress = false;
+let followEnabled = false;
+let suppressScrollCheck = false;
+
+function setupWatchIntervalWidget(){
+  const wrap = document.getElementById('watchIntervalWrap');
+  const btn = wrap.querySelector('.filter-btn');
+  const label = wrap.querySelector('.filter-label');
+  const panel = wrap.querySelector('.filter-panel');
+  const input = wrap.querySelector('.watch-interval-input');
+
+  function updateLabel(){
+    const secs = watchIntervalMs / 1000;
+    label.textContent = (Number.isInteger(secs) ? secs : secs.toFixed(1)) + 's';
+  }
+
+  function apply(){
+    const raw = input.value.trim();
+    const num = Number(raw);
+    if (!raw || isNaN(num) || num <= 0){
+      input.classList.add('invalid');
+      return;
+    }
+    input.classList.remove('invalid');
+    const ms = Math.max(300, Math.round(num * 1000));
+    watchIntervalMs = ms;
+    saveWatchIntervalToStorage(ms);
+    input.value = ms / 1000;
+    updateLabel();
+    // If already watching, apply the new period immediately rather than
+    // waiting for the next natural tick to notice the change.
+    if (watchTimer){
+      clearInterval(watchTimer);
+      watchTimer = setInterval(pollForUpdates, watchIntervalMs);
+    }
+  }
+
+  input.value = watchIntervalMs / 1000;
+  updateLabel();
+  input.addEventListener('change', apply);
+
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.filter-panel').forEach(p => { if (p !== panel) p.classList.add('hidden'); });
+    panel.classList.toggle('hidden');
+  });
+}
+setupWatchIntervalWidget();
+
+function scrollToBottom(){
+  suppressScrollCheck = true;
+  wrap.scrollTop = wrap.scrollHeight;
+}
+
+function isAtBottom(){
+  // 90px, not 40 — #wrap has 64px of bottom padding reserved for the
+  // floating watch button, so "reached the last row" is already this close
+  // to scrollHeight without needing to scroll into the blank padding too.
+  return wrap.scrollHeight - wrap.scrollTop - wrap.clientHeight < 90;
+}
+
+// When idle (Watch off) and scrolled to the bottom, offer a one-click way
+// to start watching instead of showing an always-on checkbox affordance.
+function updateWatchSuggestButton(){
+  const canSuggest = !watchTimer && !!currentServerPath && isAtBottom();
+  watchSuggestBtn.classList.toggle('hidden', !canSuggest);
+}
+
+wrap.addEventListener('scroll', () => {
+  if (suppressScrollCheck){ suppressScrollCheck = false; return; }
+  if (watchTimer && !isAtBottom()){
+    // Scrolled away while watching -> stop entirely, not just the scrolling.
+    watchToggle.checked = false;
+    stopWatch();
+    watchStatus.textContent = '';
+  }
+  updateWatchSuggestButton();
+});
+
+watchSuggestBtn.addEventListener('click', () => {
+  if (watchToggle.disabled) return;
+  watchToggle.checked = true;
+  startWatch();
+});
+
+fileInput.addEventListener('change', e => {
+  if (e.target.files[0]) loadFile(e.target.files[0]);
+});
+
+serverFiles.addEventListener('change', () => {
+  if (!serverFiles.value) return;
+  loadFromServer(serverFiles.value);
+});
+
+function setWatchAvailable(available){
+  watchToggle.disabled = !available;
+  if (!available){
+    watchToggle.checked = false;
+    stopWatch();
+    watchStatus.textContent = '';
+  }
+  updateWatchSuggestButton();
+}
+
+function startWatch(){
+  if (watchTimer || !currentServerPath) return;
+  watchTimer = setInterval(pollForUpdates, watchIntervalMs);
+  watchStatus.textContent = 'watching…';
+  followEnabled = true;
+  render(); // shows the pinned-last-line row (if applicable) and scrolls down immediately
+  updateWatchSuggestButton();
+}
+
+function stopWatch(){
+  if (watchTimer){ clearInterval(watchTimer); watchTimer = null; }
+  followEnabled = false;
+  updateWatchSuggestButton();
+  // Removed directly (not via a full render()) since stopWatch() can run
+  // during the very first page load — before render()'s own dependencies
+  // (columnFilters, columnOrder, etc.) have been initialized yet.
+  const pinned = tbody.querySelector('tr.row.pinned-last');
+  if (pinned){
+    const detail = pinned.nextElementSibling;
+    pinned.remove();
+    if (detail && detail.classList.contains('detail')) detail.remove();
+  }
+}
+
+watchToggle.addEventListener('change', () => {
+  if (watchToggle.checked) startWatch();
+  else { stopWatch(); watchStatus.textContent = ''; }
+});
+
+async function readBody(res){
+  const buf = await res.arrayBuffer();
+  return { buf, text: new TextDecoder('utf-8').decode(buf) };
+}
+
+async function fetchNewTail(){
+  const res = await fetch(currentServerPath, {
+    cache: 'no-store',
+    headers: { Range: `bytes=${rawLogByteLength}-` }
+  });
+
+  if (res.status === 206){
+    const { buf, text } = await readBody(res);
+    if (buf.byteLength > 0){
+      rawLogByteLength += buf.byteLength;
+      applyIncrementalText(text);
+    }
+  } else if (res.status === 200){
+    // Server ignored the Range header — treat the full body as fresh.
+    const { buf, text } = await readBody(res);
+    rawLogByteLength = buf.byteLength;
+    parseLog(text);
+  }
+  // else (416): either a rare HEAD/GET race, or — in the no-Content-Length
+  // fallback path — the routine "nothing new yet" case. Nothing to do.
+}
+
+async function pollForUpdates(){
+  if (watchInProgress || !currentServerPath) return;
+  watchInProgress = true;
+  try {
+    // A HEAD request costs almost nothing and always returns a normal 200 —
+    // unlike a Range GET on an unchanged file, which comes back as 416.
+    // Chrome's DevTools logs a "Failed to load resource" line for *any*
+    // non-2xx response automatically (nothing our own code can suppress),
+    // so checking size first avoids generating that on every single poll
+    // when there's nothing new, which is the common case.
+    const headRes = await fetch(currentServerPath, { method: 'HEAD', cache: 'no-store' });
+    if (!headRes.ok) throw new Error(headRes.status);
+    const totalStr = headRes.headers.get('Content-Length');
+    const total = totalStr !== null ? Number(totalStr) : null;
+
+    if (total !== null && total < rawLogByteLength){
+      // File shrank — rotated or truncated. Reload it fresh.
+      const fresh = await fetch(currentServerPath, { cache: 'no-store' });
+      const { buf, text } = await readBody(fresh);
+      rawLogByteLength = buf.byteLength;
+      parseLog(text);
+    } else if (total !== null && total > rawLogByteLength){
+      await fetchNewTail(); // confirmed growth — fetch just the new bytes
+    } else if (total === null){
+      // No Content-Length on the HEAD response (unusual for a static file
+      // server) — fall back to the old Range-based check for this tick.
+      await fetchNewTail();
+    }
+    // else: total === rawLogByteLength -> nothing new, nothing to do.
+
+    watchStatus.textContent = 'last checked ' + new Date().toISOString().slice(11, 19) + ' UTC';
+  } catch (err) {
+    console.error('Watch poll failed:', err);
+    watchStatus.textContent = 'poll failed, retrying…';
+  } finally {
+    watchInProgress = false;
+  }
+}
+
+// Keeps the browser URL in sync with whichever log is currently loaded, via
+// a "?log=" query param — so reloading the page, or sharing/bookmarking the
+// URL, reopens the same log. Uses replaceState (not pushState) so switching
+// logs doesn't spam the browser's back-button history.
+function syncUrlLogParam(path){
+  const url = new URL(window.location.href);
+  if (path) url.searchParams.set('log', path);
+  else url.searchParams.delete('log');
+  history.replaceState(null, '', url);
+}
+
+function loadFromServer(path){
+  currentServerPath = path;
+  setWatchAvailable(false); // re-enabled once this load succeeds
+  fetch(path, { cache: 'no-store' })
+    .then(async r => {
+      if (!r.ok) throw new Error(r.status);
+      return readBody(r);
+    })
+    .then(({ buf, text }) => {
+      rawLogByteLength = buf.byteLength;
+      parseLog(text);
+      setWatchAvailable(true);
+      watchToggle.checked = true;
+      startWatch();
+      syncUrlLogParam(path);
+
+      // Reflect the loaded path in the two file-selection controls: the
+      // dropdown if it's one of the locally-listed files, the custom URL
+      // box otherwise (so it's clear at a glance where the log came from,
+      // and typing/re-submitting the same value doesn't look like a no-op).
+      const matchingOption = [...serverFiles.options].find(o => o.value === path);
+      if (matchingOption){
+        serverFiles.value = path;
+        customUrlInput.value = '';
+      } else {
+        serverFiles.value = '';
+        customUrlInput.value = path;
+      }
+    })
+    .catch(err => {
+      currentServerPath = null;
+      dropzone.querySelector('.box').innerHTML =
+        `Could not load <b>${escapeHtml(path)}</b> (${escapeHtml(String(err.message || err))}).<br>` +
+        `Drop a file here, or use the controls above.`;
+    });
+}
+
+// On load, a "?log=" param in the URL takes priority over the hardcoded
+// default — this is what makes switching logs bookmarkable/shareable.
+const initialLogParam = new URLSearchParams(window.location.search).get('log');
+loadFromServer(initialLogParam || ('/' + DEFAULT_FILE));
+
+customUrlInput.addEventListener('keydown', e => {
+  if (e.key !== 'Enter') return;
+  const value = customUrlInput.value.trim();
+  if (value) loadFromServer(value);
+});
+
+// Try the nginx autoindex JSON listing at /api/files. Silently
+// no-ops (falls back to file picker) if it's not being served this way.
+fetch('/api/files/')
+  .then(r => r.ok ? r.json() : Promise.reject())
+  .then(list => {
+    const jsonFiles = list
+      .filter(f => f.type === 'file' && f.name.endsWith('.json'))
+      .map(f => f.name)
+      .sort();
+    if (!jsonFiles.length) return;
+    serverFiles.innerHTML = '<option value="">Select a file on server…</option>' +
+      jsonFiles.map(n => `<option value="/${encodeURIComponent(n)}">${escapeHtml(n)}</option>`).join('');
+    serverFiles.style.display = '';
+    // The initial load may have finished before this listing arrived, in
+    // which case it couldn't have matched an option yet — check again now.
+    if (currentServerPath && [...serverFiles.options].some(o => o.value === currentServerPath)){
+      serverFiles.value = currentServerPath;
+      customUrlInput.value = '';
+    }
+  })
+  .catch(() => { /* not running behind the nginx config, that's fine */ });
+
+document.body.addEventListener('dragover', e => e.preventDefault());
+document.body.addEventListener('drop', e => {
+  e.preventDefault();
+  if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]);
+});
+
+function loadFile(file){
+  currentServerPath = null;
+  setWatchAvailable(false);
+  syncUrlLogParam(null); // a local file has no URL to bookmark/reload from
+  serverFiles.value = '';
+  customUrlInput.value = '';
+  const reader = new FileReader();
+  reader.onload = () => parseLog(reader.result);
+  reader.readAsText(file);
+}
+
+const HTML_ESCAPE_MAP = { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' };
+// navigator.clipboard needs a secure context (HTTPS or localhost) — it's
+// simply unavailable over plain file:// or a non-localhost http://, and
+// calling .writeText on it throws synchronously rather than rejecting a
+// promise, so a bare .catch() doesn't help. Fall back to the older
+// execCommand('copy') technique (via a hidden textarea) in that case.
+function copyToClipboard(text){
+  if (navigator.clipboard && navigator.clipboard.writeText){
+    return navigator.clipboard.writeText(text).catch(() => copyViaTextarea(text));
+  }
+  return copyViaTextarea(text);
+}
+
+function copyViaTextarea(text){
+  return new Promise((resolve, reject) => {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.top = '-1000px';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) { /* fall through to reject below */ }
+    document.body.removeChild(ta);
+    ok ? resolve() : reject(new Error('execCommand copy failed'));
+  });
+}
+
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g, c => HTML_ESCAPE_MAP[c]);
+}
+
+function fmtTime(created){
+  if (typeof created !== 'number') return '';
+  const iso = new Date(created * 1000).toISOString(); // "YYYY-MM-DDTHH:mm:ss.sssZ", always 24h
+  const [datePart, timePart] = iso.split('T');
+  return datePart.replace(/-/g, '/') + ' ' + timePart.replace('Z', '');
+}
+
+// Plain-text time inputs, "YYYY/MM/DD HH:MM:SS.mmm" (ms optional on input,
+// always shown), 24-hour, treated as UTC — matches fmtTime()'s table
+// display exactly and has no dependency on browser/OS locale.
+function fmtTimeInputValue(created){
+  return fmtTime(created); // already full ms precision
+}
+
+const TIME_INPUT_RE = /^(\d{4})\/(\d{2})\/(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?$/;
+
+// Returns { epoch, hasMs } — hasMs tells the caller whether milliseconds
+// were explicitly given, so a "To" boundary with none can be widened to
+// cover the whole second instead of just its first instant.
+function parseTimeInputValue(str){
+  if (!str) return null;
+  const m = str.trim().match(TIME_INPUT_RE);
+  if (!m) return null;
+  const [, y, mo, d, h, mi, s, msRaw] = m;
+  const ms = msRaw ? Number(msRaw.padEnd(3, '0')) : 0;
+  const epochMs = Date.UTC(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi), s ? Number(s) : 0, ms);
+  if (isNaN(epochMs)) return null;
+  return { epoch: epochMs / 1000, hasMs: !!msRaw };
+}
+
+function toKey(v){
+  if (v === undefined || v === null) return null;
+  if (typeof v === 'object') return JSON.stringify(v);
+  return String(v);
+}
+
+function sortValues(keys){
+  const numeric = keys.length > 0 && keys.every(k => k !== '' && !isNaN(Number(k)));
+  return numeric ? keys.slice().sort((a, b) => Number(a) - Number(b)) : keys.slice().sort();
+}
+
+// The set of selectable values for a field's filter. Level is special: it
+// always offers the full canonical severity list in severity order (so e.g.
+// ERROR is offered even in a file that happens to contain none). Every other
+// field offers the distinct values actually seen, sorted.
+function filterValuesFor(field){
+  return field === '__level' ? LEVELS.slice() : sortValues(fieldValueOrder.get(field) || []);
+}
+
+/* ---------------------------------------------------------------------
+ * Generic click-to-select multi-select filter dropdown.
+ * Used both for the Columns picker and for every per-column value filter.
+ * Plain click -> select only this value.
+ * Ctrl/Cmd+click -> toggle this value in the current selection.
+ * Shift+click -> select the contiguous range from the last-clicked value.
+ * ------------------------------------------------------------------- */
+// Wires the "Auto-select new pids" / "Exclusively" checkboxes inside a pid
+// filter dropdown. Shared between the full header dropdown (rebuildHeader)
+// and the hidden-column chip (buildHiddenFilterChip) — these settings need
+// to be reachable regardless of whether the Pid column is currently shown.
+function wirePidAutoSelectCheckboxes(dropdown){
+  const autoSelectCheckbox = dropdown.querySelector('.fp-autoselect-checkbox');
+  autoSelectCheckbox.checked = autoSelectNewPids;
+  autoSelectCheckbox.addEventListener('change', () => {
+    autoSelectNewPids = autoSelectCheckbox.checked;
+    saveAutoSelectNewPidsToStorage(autoSelectNewPids);
+  });
+
+  const exclusiveCheckbox = dropdown.querySelector('.fp-exclusive-checkbox');
+  exclusiveCheckbox.checked = exclusiveNewPid;
+  exclusiveCheckbox.addEventListener('change', () => {
+    exclusiveNewPid = exclusiveCheckbox.checked;
+    saveExclusiveNewPidToStorage(exclusiveNewPid);
+  });
+}
+
+function buildFilterDropdownDOM(titlePrefix, { withSave = false, withColorize = false, withAutoSelectNew = false, withShowColumn = false, withRemoveFilter = false } = {}){
+  const wrap = document.createElement('div');
+  wrap.className = 'filter-wrap';
+  wrap.innerHTML = `
+    <button type="button" class="filter-btn">${escapeHtml(titlePrefix)}: <span class="filter-label">all</span></button>
+    <div class="filter-panel hidden">
+      <div class="filter-panel-actions">
+        <button type="button" class="fp-all">All</button>
+        <button type="button" class="fp-none">None</button>
+        ${withSave ? `
+          <button type="button" class="fp-save" title="Save this column's current filter as its default">Save as default</button>
+          <button type="button" class="fp-clear" title="Remove the saved default for this column (goes back to showing everything, including future new values)">Clear default</button>
+        ` : ''}
+        ${withColorize ? `
+          <label class="fp-toggle" title="Color-code each distinct value in this column">
+            <input type="checkbox" class="fp-colorize-checkbox"> Colorize
+          </label>
+        ` : ''}
+        ${withAutoSelectNew ? `
+          <label class="fp-toggle" title="When Watch mode discovers a new pid, add it to the current selection automatically">
+            <input type="checkbox" class="fp-autoselect-checkbox"> Auto-select new pids
+          </label>
+          <label class="fp-toggle" title="When a new pid is auto-selected, replace the current selection with it instead of adding to it">
+            <input type="checkbox" class="fp-exclusive-checkbox"> Exclusively (replace selection)
+          </label>
+        ` : ''}
+        ${withShowColumn ? `<button type="button" class="fp-showcol" title="Add this column back to the table">Show column</button>` : ''}
+        ${withRemoveFilter ? `<button type="button" class="fp-remove" title="Remove this filter entirely">Remove filter</button>` : ''}
+        <span class="hint">⌘/Ctrl add · Shift range</span>
+      </div>
+      <div class="fp-list"></div>
+    </div>`;
+  return wrap;
+}
+
+function attachFilterBehavior(wrapEl, { onChange, mode = 'exclusive' }){
+  const btn = wrapEl.querySelector('.filter-btn');
+  const label = wrapEl.querySelector('.filter-label');
+  const panel = wrapEl.querySelector('.filter-panel');
+  const list = wrapEl.querySelector('.fp-list');
+  const allBtn = wrapEl.querySelector('.fp-all');
+  const noneBtn = wrapEl.querySelector('.fp-none');
+
+  let allValues = [];
+  let selected = new Set();
+  let lastClicked = null;
+
+  function refreshHighlight(){
+    list.querySelectorAll('.filter-row').forEach(row => {
+      row.classList.toggle('selected', selected.has(row.dataset.value));
+    });
+  }
+
+  function updateLabel(){
+    if (!allValues.length) label.textContent = 'all';
+    else if (selected.size === 0) label.textContent = 'none';
+    else if (selected.size === allValues.length) label.textContent = 'all';
+    else if (selected.size <= 2) label.textContent = [...selected].map(v => v.length > 10 ? v.slice(0, 10) + '…' : v).join(', ');
+    else label.textContent = `${selected.size}/${allValues.length}`;
+  }
+
+  function setValues(values, counts, defaultSelected, renderRow){
+    allValues = values;
+    // Only clear the shift-click anchor if it's no longer a valid value.
+    // setValues() runs on every Watch-mode poll (to refresh counts) for
+    // every visible filter column, not just when the user opens one —
+    // unconditionally nulling this would break a click-then-shift-click
+    // gesture any time a poll happened to land in between the two clicks.
+    if (lastClicked !== null && !values.includes(lastClicked)){
+      lastClicked = null;
+    }
+    if (!values.length){
+      list.innerHTML = `<div class="filter-empty">None found</div>`;
+      selected = new Set();
+      updateLabel();
+      return;
+    }
+    selected = new Set(defaultSelected !== undefined ? defaultSelected : values);
+    list.innerHTML = values.map(v => renderRow(v, counts)).join('');
+    refreshHighlight();
+    updateLabel();
+  }
+
+  list.addEventListener('click', e => {
+    const row = e.target.closest('.filter-row');
+    if (!row) return;
+    const value = row.dataset.value;
+    const index = allValues.indexOf(value);
+
+    if (e.shiftKey && lastClicked !== null){
+      const anchor = allValues.indexOf(lastClicked);
+      const [lo, hi] = anchor < index ? [anchor, index] : [index, anchor];
+      const range = allValues.slice(lo, hi + 1);
+      if (mode === 'toggle'){
+        range.forEach(v => selected.add(v));
+      } else {
+        selected = new Set(range);
+      }
+    } else if (mode === 'toggle' || e.ctrlKey || e.metaKey){
+      if (selected.has(value)) selected.delete(value);
+      else selected.add(value);
+      lastClicked = value;
+    } else {
+      selected = new Set([value]);
+      lastClicked = value;
+    }
+
+    refreshHighlight();
+    updateLabel();
+    onChange();
+  });
+
+  allBtn.addEventListener('click', () => {
+    selected = new Set(allValues);
+    refreshHighlight(); updateLabel(); onChange();
+  });
+
+  noneBtn.addEventListener('click', () => {
+    selected = new Set();
+    refreshHighlight(); updateLabel(); onChange();
+  });
+
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.filter-panel').forEach(p => { if (p !== panel) p.classList.add('hidden'); });
+    panel.classList.toggle('hidden');
+  });
+
+  return {
+    get selected(){ return selected; },
+    get allValues(){ return allValues; },
+    setValues,
+  };
+}
+
+/* ---------------------------------------------------------------------
+ * localStorage persistence.
+ * Columns are saved automatically on every change.
+ * Filters are only saved when the "Save filters as default" button is
+ * pressed — they are not auto-saved on every click.
+ * ------------------------------------------------------------------- */
+const STORAGE_KEY_COLUMNS = 'logviewer.columns.v1';
+const STORAGE_KEY_FILTERS = 'logviewer.filters.v1';
+
+function loadSavedColumns(){
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_COLUMNS);
+    const parsed = raw ? JSON.parse(raw) : null;
+    return Array.isArray(parsed) ? parsed : null;
+  } catch (e) { return null; }
+}
+
+function saveColumnsToStorage(cols){
+  try { localStorage.setItem(STORAGE_KEY_COLUMNS, JSON.stringify(cols)); } catch (e) { /* storage unavailable, ignore */ }
+}
+
+function loadSavedFilters(){
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_FILTERS);
+    const parsed = raw ? JSON.parse(raw) : {};
+    return (parsed && typeof parsed === 'object') ? parsed : {};
+  } catch (e) { return {}; }
+}
+
+function saveFiltersToStorage(filtersObj){
+  try { localStorage.setItem(STORAGE_KEY_FILTERS, JSON.stringify(filtersObj)); } catch (e) { /* storage unavailable, ignore */ }
+}
+
+const STORAGE_KEY_COLORIZE_OFF = 'logviewer.colorizeOff.v1';
+
+function loadColorizeOff(){
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_COLORIZE_OFF);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(parsed) ? parsed : []);
+  } catch (e) { return new Set(); }
+}
+
+function saveColorizeOffToStorage(set){
+  try { localStorage.setItem(STORAGE_KEY_COLORIZE_OFF, JSON.stringify([...set])); } catch (e) { /* storage unavailable, ignore */ }
+}
+
+const STORAGE_KEY_AUTO_SELECT_NEW_PIDS = 'logviewer.autoSelectNewPids.v1';
+
+function loadAutoSelectNewPids(){
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_AUTO_SELECT_NEW_PIDS);
+    return raw === null ? true : JSON.parse(raw); // default ON
+  } catch (e) { return true; }
+}
+
+function saveAutoSelectNewPidsToStorage(value){
+  try { localStorage.setItem(STORAGE_KEY_AUTO_SELECT_NEW_PIDS, JSON.stringify(value)); } catch (e) { /* storage unavailable, ignore */ }
+}
+
+const STORAGE_KEY_EXCLUSIVE_NEW_PID = 'logviewer.exclusiveNewPid.v1';
+
+function loadExclusiveNewPid(){
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_EXCLUSIVE_NEW_PID);
+    return raw === null ? false : JSON.parse(raw); // default OFF — new pids are added, not exclusive
+  } catch (e) { return false; }
+}
+
+function saveExclusiveNewPidToStorage(value){
+  try { localStorage.setItem(STORAGE_KEY_EXCLUSIVE_NEW_PID, JSON.stringify(value)); } catch (e) { /* storage unavailable, ignore */ }
+}
+
+const STORAGE_KEY_COLLAPSE_MESSAGES = 'logviewer.collapseMessages.v1';
+
+function loadCollapseMessages(){
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_COLLAPSE_MESSAGES);
+    return raw === null ? false : JSON.parse(raw); // default OFF — full messages shown
+  } catch (e) { return false; }
+}
+
+function saveCollapseMessagesToStorage(value){
+  try { localStorage.setItem(STORAGE_KEY_COLLAPSE_MESSAGES, JSON.stringify(value)); } catch (e) { /* storage unavailable, ignore */ }
+}
+
+const STORAGE_KEY_COLUMN_ORDER = 'logviewer.columnOrder.v1';
+
+function loadColumnOrder(){
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_COLUMN_ORDER);
+    const parsed = raw ? JSON.parse(raw) : null;
+    return Array.isArray(parsed) ? parsed : null;
+  } catch (e) { return null; }
+}
+
+function saveColumnOrderToStorage(order){
+  try { localStorage.setItem(STORAGE_KEY_COLUMN_ORDER, JSON.stringify(order)); } catch (e) { /* storage unavailable, ignore */ }
+}
+
+const STORAGE_KEY_CUSTOM_LABELS = 'logviewer.customLabels.v1';
+
+function loadCustomLabels(){
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_CUSTOM_LABELS);
+    const parsed = raw ? JSON.parse(raw) : {};
+    return (parsed && typeof parsed === 'object') ? parsed : {};
+  } catch (e) { return {}; }
+}
+
+function saveCustomLabelsToStorage(obj){
+  try { localStorage.setItem(STORAGE_KEY_CUSTOM_LABELS, JSON.stringify(obj)); } catch (e) { /* storage unavailable, ignore */ }
+}
+
+let customLabels = loadCustomLabels(); // fieldName -> user-chosen display label
+
+const STORAGE_KEY_ELAPSED_THRESHOLD = 'logviewer.elapsedThreshold.v1';
+
+function loadElapsedThreshold(){
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_ELAPSED_THRESHOLD);
+    if (raw === null) return null;
+    const num = JSON.parse(raw);
+    return typeof num === 'number' && !isNaN(num) ? num : null;
+  } catch (e) { return null; }
+}
+
+function saveElapsedThresholdToStorage(value){
+  try { localStorage.setItem(STORAGE_KEY_ELAPSED_THRESHOLD, JSON.stringify(value)); } catch (e) { /* storage unavailable, ignore */ }
+}
+
+let elapsedThreshold = loadElapsedThreshold(); // seconds; lines slower than this render in red, null = off
+
+let savedFilters = loadSavedFilters();
+let colorizeOff = loadColorizeOff(); // fields where coloring has been turned off
+let autoSelectNewPids = loadAutoSelectNewPids(); // opt-out: new pids join the current pid filter automatically
+let exclusiveNewPid = loadExclusiveNewPid(); // opt-in: a new pid replaces the selection instead of joining it
+let collapseMessages = loadCollapseMessages(); // opt-in: truncate long messages to one line by default
+let columnOrder = []; // display order for ALL known fields, user-reorderable via the Columns picker
+
+collapseMsgToggle.checked = collapseMessages;
+collapseMsgToggle.addEventListener('change', () => {
+  collapseMessages = collapseMsgToggle.checked;
+  saveCollapseMessagesToStorage(collapseMessages);
+  render();
+});
+
+document.addEventListener('click', e => {
+  document.querySelectorAll('.filter-wrap').forEach(w => {
+    if (!w.contains(e.target)) w.querySelector('.filter-panel').classList.add('hidden');
+  });
+});
+
+/* ---------------------------------------------------------------------
+ * Columns picker (toolbar) — decides which fields are shown as columns.
+ * ------------------------------------------------------------------- */
+let allFields = [];
+let visibleColumns = new Set();
+let timeRange = { from: null, to: null }; // epoch seconds, inclusive bounds; null = unbounded
+let timeRangeInitializedForThisFile = false; // reset per full file load, not per column show/hide
+let timeRangeApi = null; // set by buildTimeRangeColumn(); lets the row context menu drive the range
+
+/* ---------------------------------------------------------------------
+ * Right-click on a log row -> "Set as range start" / "Set as range end".
+ * Only meaningful once a Time column with a range filter exists.
+ * ------------------------------------------------------------------- */
+const rowContextMenu = document.getElementById('rowContextMenu');
+let contextMenuCreated = null;
+
+function showRowContextMenu(x, y, created){
+  contextMenuCreated = created;
+  rowContextMenu.classList.remove('hidden');
+  // Clamp to the viewport so it doesn't render off-screen near edges.
+  const rect = rowContextMenu.getBoundingClientRect();
+  const clampedX = Math.min(x, window.innerWidth - rect.width - 8);
+  const clampedY = Math.min(y, window.innerHeight - rect.height - 8);
+  rowContextMenu.style.left = Math.max(4, clampedX) + 'px';
+  rowContextMenu.style.top = Math.max(4, clampedY) + 'px';
+}
+
+function hideRowContextMenu(){
+  rowContextMenu.classList.add('hidden');
+  contextMenuCreated = null;
+}
+
+rowContextMenu.addEventListener('click', e => {
+  const btn = e.target.closest('button[data-action]');
+  if (!btn || contextMenuCreated === null || !timeRangeApi) { hideRowContextMenu(); return; }
+  if (btn.dataset.action === 'from') timeRangeApi.setFrom(contextMenuCreated);
+  if (btn.dataset.action === 'to') timeRangeApi.setTo(contextMenuCreated);
+  hideRowContextMenu();
+});
+
+document.addEventListener('click', hideRowContextMenu);
+document.addEventListener('contextmenu', e => {
+  if (!e.target.closest('#tbody td.time')) hideRowContextMenu();
+});
+window.addEventListener('scroll', hideRowContextMenu, true);
+window.addEventListener('resize', hideRowContextMenu);
+const columnFilters = new Map(); // fieldName -> filter API (only for visible, non-textual columns)
+
+// A narrowed filter survives hiding its column: its {selected, allValues}
+// snapshot moves here instead of being discarded, render() still applies
+// it, and it resurfaces as a removable chip so it isn't silently invisible.
+let hiddenActiveFilters = new Map(); // fieldName -> { selected: Set<string>, allValues: string[] }
+
+const hiddenFiltersBar = document.getElementById('hiddenFiltersBar');
+
+function showColumn(field){
+  if (visibleColumns.has(field)) return;
+  visibleColumns = new Set([...visibleColumns, field]);
+  saveColumnsToStorage([...visibleColumns]);
+  columnsFilter.setValues(columnOrder, new Map(), [...visibleColumns], renderColumnPickerRow);
+  enableColumnDragReorder();
+  attachRenameHandlers();
+  rebuildHeader();
+  render();
+}
+
+function clearHiddenFilter(field){
+  if (field === 'created'){
+    timeRange = { from: null, to: null };
+  } else {
+    hiddenActiveFilters.delete(field);
+  }
+  renderHiddenFilterChips();
+  render();
+}
+
+function buildHiddenFilterChip(field){
+  const state = hiddenActiveFilters.get(field);
+  const isPid = field === 'process';
+  const dropdown = buildFilterDropdownDOM(prettyLabel(field), { withShowColumn: true, withRemoveFilter: true, withAutoSelectNew: isPid });
+  dropdown.querySelector('.filter-btn').classList.add('has-default');
+  if (isPid) wirePidAutoSelectCheckboxes(dropdown);
+
+  const api = attachFilterBehavior(dropdown, {
+    onChange: () => {
+      const stillNarrowed = api.selected.size !== api.allValues.length;
+      if (stillNarrowed){
+        hiddenActiveFilters.set(field, { selected: new Set(api.selected), allValues: api.allValues.slice() });
+        render(); // just re-filter — rebuilding the bar here would close this open panel
+      } else {
+        hiddenActiveFilters.delete(field); // back to "everything" — the chip should disappear
+        renderHiddenFilterChips();
+        render();
+      }
+    }
+  });
+
+  const counts = fieldValueCounts.get(field) || new Map();
+  const values = filterValuesFor(field);
+  const initialSelected = [...state.selected].filter(v => values.includes(v));
+  api.setValues(values, counts, initialSelected, (v, c) => renderValueFilterRow(field, v, c));
+
+  dropdown.querySelector('.fp-showcol').addEventListener('click', () => showColumn(field));
+  dropdown.querySelector('.fp-remove').addEventListener('click', () => clearHiddenFilter(field));
+
+  return dropdown;
+}
+
+function buildHiddenTimeChip(){
+  const widget = buildTimeRangeColumn({ withShowColumn: true, withRemoveFilter: true });
+  timeRangeApi = widget; // keep right-click "set as range start/end" working while hidden too
+  widget.wrap.querySelector('.filter-btn').classList.add('has-default');
+  return widget.wrap;
+}
+
+function renderHiddenFilterChips(){
+  const fields = [...hiddenActiveFilters.keys()];
+  const timeHidden = !visibleColumns.has('created') && (timeRange.from !== null || timeRange.to !== null);
+
+  if (!fields.length && !timeHidden){
+    hiddenFiltersBar.classList.add('hidden');
+    hiddenFiltersBar.innerHTML = '';
+    return;
+  }
+
+  hiddenFiltersBar.classList.remove('hidden');
+  hiddenFiltersBar.innerHTML = '';
+
+  const label = document.createElement('span');
+  label.className = 'bar-label';
+  label.textContent = 'Active filters on hidden columns:';
+  hiddenFiltersBar.appendChild(label);
+
+  fields.forEach(field => hiddenFiltersBar.appendChild(buildHiddenFilterChip(field)));
+  if (timeHidden) hiddenFiltersBar.appendChild(buildHiddenTimeChip());
+}
+
+const columnsFilter = attachFilterBehavior(document.getElementById('columnsFilterWrap'), {
+  mode: 'toggle',
+  onChange: () => {
+    visibleColumns = new Set(columnsFilter.selected);
+    saveColumnsToStorage([...visibleColumns]);
+    rebuildHeader();
+    render();
+  }
+});
+
+function renderColumnPickerRow(field){
+  return `<div class="filter-row" data-value="${escapeHtml(field)}" title="${escapeHtml(prettyLabel(field))}">
+    <span class="drag-handle">⋮⋮</span>
+    <span class="row-label">${escapeHtml(prettyLabel(field))}</span>
+    <button type="button" class="rename-btn" data-field="${escapeHtml(field)}" title="Rename this column">✎</button>
+  </div>`;
+}
+
+// Lets each column be renamed from the Columns picker. Must be re-called
+// after every columnsFilter.setValues() call, for the same reason as
+// enableColumnDragReorder — the list's innerHTML gets replaced each time.
+function attachRenameHandlers(){
+  const list = document.querySelector('#columnsFilterWrap .fp-list');
+  if (!list) return;
+
+  list.querySelectorAll('.rename-btn').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation(); // don't let this also toggle the column's visibility
+      const field = btn.dataset.field;
+      const current = prettyLabel(field);
+      const next = window.prompt('Rename this column (leave blank to reset to the default name):', current);
+      if (next === null) return; // cancelled
+
+      const trimmed = next.trim();
+      const builtIn = (FIELD_META[field] && FIELD_META[field].label) || field;
+      if (trimmed && trimmed !== builtIn){
+        customLabels[field] = trimmed;
+      } else {
+        delete customLabels[field];
+      }
+      saveCustomLabelsToStorage(customLabels);
+
+      columnsFilter.setValues(columnOrder, new Map(), [...visibleColumns], renderColumnPickerRow);
+      enableColumnDragReorder();
+      attachRenameHandlers();
+      rebuildHeader();
+      renderHiddenFilterChips();
+    });
+  });
+}
+
+// Lets the Columns picker's list be reordered by drag-and-drop. Must be
+// called again after every columnsFilter.setValues() call, since that
+// replaces the list's innerHTML (and any listeners attached to it).
+function enableColumnDragReorder(){
+  const list = document.querySelector('#columnsFilterWrap .fp-list');
+  if (!list) return;
+
+  list.querySelectorAll('.filter-row').forEach(row => {
+    row.draggable = true;
+
+    row.addEventListener('dragstart', e => {
+      row.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      // Some browsers need this set to actually start the drag.
+      e.dataTransfer.setData('text/plain', row.dataset.value);
+    });
+
+    row.addEventListener('dragend', () => {
+      row.classList.remove('dragging');
+    });
+
+    row.addEventListener('dragover', e => {
+      e.preventDefault();
+      const dragging = list.querySelector('.dragging');
+      if (!dragging || dragging === row) return;
+      const rect = row.getBoundingClientRect();
+      const insertBefore = (e.clientY - rect.top) < rect.height / 2;
+      list.insertBefore(dragging, insertBefore ? row : row.nextSibling);
+    });
+
+    row.addEventListener('drop', e => {
+      e.preventDefault();
+      columnOrder = [...list.querySelectorAll('.filter-row')].map(r => r.dataset.value);
+      saveColumnOrderToStorage(columnOrder);
+      rebuildHeader();
+      render();
+    });
+  });
+}
+
+function renderValueFilterRow(field, value, counts){
+  let labelHtml;
+  if (field === '__level'){
+    labelHtml = `<span class="badge lvl-${value}">${value}</span>`;
+  } else if (field === 'created'){
+    labelHtml = `<span>${escapeHtml(fmtTime(Number(value)))}</span>`;
+  } else if (field === 'process'){
+    const color = colorizeOff.has('process') ? 'inherit' : (pidColorMap.get(value) || 'inherit');
+    labelHtml = `<span style="color:${color}">${escapeHtml(value)}</span>`;
+  } else if (field === 'thread_native'){
+    const color = colorizeOff.has('thread_native') ? 'inherit' : (threadColorMap.get(value) || 'inherit');
+    labelHtml = `<span style="color:${color}">${escapeHtml(value)}</span>`;
+  } else {
+    labelHtml = `<span>${escapeHtml(value)}</span>`;
+  }
+  return `<div class="filter-row" data-value="${escapeHtml(value)}" title="${escapeHtml(value)}">
+    <span class="row-label">${labelHtml}</span>
+    <span class="count">${counts.get(value) || 0}</span>
+  </div>`;
+}
+
+
+// A plain text input living directly in the Message column's header — no
+// dropdown panel needed, unlike the other filters. Debounced the same way
+// the old toolbar search box was. Searches message/logger/module/function/
+// dbname regardless of which of those columns are actually visible.
+let searchDebounceTimer = null;
+
+function buildMessageSearchColumn(){
+  const wrap = document.createElement('div');
+  wrap.innerHTML = `<input type="text" class="message-search-input" placeholder="Search message, logger, module…">`;
+  const input = wrap.querySelector('.message-search-input');
+  input.value = searchQuery;
+  input.addEventListener('input', () => {
+    searchQuery = input.value;
+    clearTimeout(searchDebounceTimer);
+    searchDebounceTimer = setTimeout(render, 150);
+  });
+  return wrap;
+}
+
+function buildElapsedThresholdColumn(){
+  const wrap = document.createElement('div');
+  wrap.className = 'filter-wrap';
+  wrap.innerHTML = `
+    <button type="button" class="filter-btn">Δt (s): <span class="filter-label">off</span></button>
+    <div class="filter-panel hidden">
+      <div class="filter-panel-actions">
+        <button type="button" class="fp-all">Off</button>
+      </div>
+      <div class="time-range-fields">
+        <label>Highlight in red when slower than (seconds)<input type="text" class="elapsed-threshold-input" placeholder="e.g. 1.0"></label>
+      </div>
+    </div>`;
+
+  const btn = wrap.querySelector('.filter-btn');
+  const label = wrap.querySelector('.filter-label');
+  const panel = wrap.querySelector('.filter-panel');
+  const input = wrap.querySelector('.elapsed-threshold-input');
+  const offBtn = wrap.querySelector('.fp-all');
+
+  function updateLabel(){
+    label.textContent = elapsedThreshold !== null ? `> ${elapsedThreshold}s` : 'off';
+  }
+
+  function applyThreshold(){
+    const raw = input.value.trim();
+    if (!raw){
+      elapsedThreshold = null;
+      input.classList.remove('invalid');
+    } else {
+      const num = Number(raw);
+      if (isNaN(num)){
+        input.classList.add('invalid');
+        return;
+      }
+      input.classList.remove('invalid');
+      elapsedThreshold = num;
+    }
+    saveElapsedThresholdToStorage(elapsedThreshold);
+    updateLabel();
+    render();
+  }
+
+  input.value = elapsedThreshold !== null ? String(elapsedThreshold) : '';
+  updateLabel();
+
+  input.addEventListener('change', applyThreshold);
+  offBtn.addEventListener('click', () => {
+    input.value = '';
+    input.classList.remove('invalid');
+    applyThreshold();
+  });
+
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.filter-panel').forEach(p => { if (p !== panel) p.classList.add('hidden'); });
+    panel.classList.toggle('hidden');
+  });
+
+  return wrap;
+}
+
+function buildTimeRangeColumn({ withShowColumn = false, withRemoveFilter = false } = {}){
+  const wrap = document.createElement('div');
+  wrap.className = 'filter-wrap';
+  wrap.innerHTML = `
+    <button type="button" class="filter-btn">Time: <span class="filter-label">all</span></button>
+    <div class="filter-panel hidden">
+      <div class="filter-panel-actions">
+        <button type="button" class="fp-all">All</button>
+        <button type="button" class="fp-save" title="Save this time range as the default">Save as default</button>
+        <button type="button" class="fp-clear" title="Remove the saved default time range">Clear default</button>
+        ${withShowColumn ? `<button type="button" class="fp-showcol" title="Add this column back to the table">Show column</button>` : ''}
+        ${withRemoveFilter ? `<button type="button" class="fp-remove" title="Remove this filter entirely">Remove filter</button>` : ''}
+      </div>
+      <div class="time-range-fields">
+        <label>From<input type="text" class="tr-from" placeholder="YYYY/MM/DD HH:MM:SS[.mmm]"></label>
+        <label>To<input type="text" class="tr-to" placeholder="YYYY/MM/DD HH:MM:SS[.mmm]"></label>
+        <span class="hint">Tip: right-click a line's time to set it as start/end</span>
+      </div>
+    </div>`;
+
+  const btn = wrap.querySelector('.filter-btn');
+  const label = wrap.querySelector('.filter-label');
+  const panel = wrap.querySelector('.filter-panel');
+  const fromInput = wrap.querySelector('.tr-from');
+  const toInput = wrap.querySelector('.tr-to');
+  const allBtn = wrap.querySelector('.fp-all');
+  const saveBtn = wrap.querySelector('.fp-save');
+  const clearBtn = wrap.querySelector('.fp-clear');
+
+  if (withShowColumn){
+    wrap.querySelector('.fp-showcol').addEventListener('click', () => showColumn('created'));
+  }
+  if (withRemoveFilter){
+    wrap.querySelector('.fp-remove').addEventListener('click', () => clearHiddenFilter('created'));
+  }
+
+  function updateLabel(){
+    if (timeRange.from === null && timeRange.to === null){
+      label.textContent = 'all';
+    } else {
+      const fromStr = timeRange.from !== null ? fmtTime(timeRange.from) : '…';
+      const toStr = timeRange.to !== null ? fmtTime(timeRange.to) : '…';
+      label.textContent = `${fromStr} → ${toStr}`;
+    }
+  }
+
+  function updateHasDefault(){
+    const saved = savedFilters.created;
+    const isSaved = saved && typeof saved === 'object' && !Array.isArray(saved)
+      && (saved.from !== null && saved.from !== undefined || saved.to !== null && saved.to !== undefined);
+    btn.classList.toggle('has-default', !!isSaved);
+    btn.title = isSaved ? 'This column has a saved default range (border highlighted). Use "Clear default" to remove it.' : '';
+    clearBtn.disabled = !isSaved;
+  }
+
+  const isHiddenChipContext = withShowColumn || withRemoveFilter;
+
+  function notifyIfClearedInHiddenChip(){
+    // Only relevant when this widget lives in the hidden-filters bar: if the
+    // range is now fully unbounded, this chip has nothing left to show and
+    // should disappear. Rebuilding unconditionally would close this very
+    // panel on every edit, so only do it once there's truly nothing left.
+    if (isHiddenChipContext && timeRange.from === null && timeRange.to === null){
+      renderHiddenFilterChips();
+    }
+  }
+
+  function applyInputs(){
+    const fromRaw = fromInput.value.trim();
+    const toRaw = toInput.value.trim();
+    const fromParsed = fromRaw ? parseTimeInputValue(fromRaw) : null;
+    const toParsed = toRaw ? parseTimeInputValue(toRaw) : null;
+
+    fromInput.classList.toggle('invalid', !!fromRaw && fromParsed === null);
+    toInput.classList.toggle('invalid', !!toRaw && toParsed === null);
+
+    // If "To" has no explicit milliseconds, treat it as "through the end of
+    // that second" rather than its very first instant.
+    const toEpoch = toParsed ? (toParsed.hasMs ? toParsed.epoch : toParsed.epoch + 0.999) : null;
+
+    timeRange = {
+      from: fromParsed ? fromParsed.epoch : null,
+      to: toEpoch,
+    };
+    updateLabel();
+    render();
+    notifyIfClearedInHiddenChip();
+  }
+
+  function resetToAll(){
+    fromInput.value = '';
+    toInput.value = '';
+    fromInput.classList.remove('invalid');
+    toInput.classList.remove('invalid');
+    timeRange = { from: null, to: null };
+    updateLabel();
+    render();
+    notifyIfClearedInHiddenChip();
+  }
+
+  // Initial state: on first build for this file, load a saved default range
+  // if present. On later rebuilds (e.g. re-showing this column after hiding
+  // it mid-session), keep whatever range is already active instead of
+  // clobbering it back to the saved default.
+  if (!timeRangeInitializedForThisFile){
+    const saved = savedFilters.created;
+    if (saved && typeof saved === 'object' && !Array.isArray(saved)){
+      timeRange = { from: saved.from ?? null, to: saved.to ?? null };
+    } else {
+      timeRange = { from: null, to: null };
+    }
+    timeRangeInitializedForThisFile = true;
+  }
+  fromInput.value = timeRange.from !== null ? fmtTimeInputValue(timeRange.from) : '';
+  toInput.value = timeRange.to !== null ? fmtTimeInputValue(timeRange.to) : '';
+  updateLabel();
+  updateHasDefault();
+
+  fromInput.addEventListener('change', applyInputs);
+  toInput.addEventListener('change', applyInputs);
+  allBtn.addEventListener('click', resetToAll);
+
+  saveBtn.addEventListener('click', () => {
+    savedFilters = { ...savedFilters, created: { from: timeRange.from, to: timeRange.to } };
+    saveFiltersToStorage(savedFilters);
+    updateHasDefault();
+    const original = saveBtn.textContent;
+    saveBtn.textContent = 'Saved ✓';
+    setTimeout(() => { saveBtn.textContent = original; }, 1000);
+  });
+
+  clearBtn.addEventListener('click', () => {
+    if (clearBtn.disabled) return;
+    const rest = { ...savedFilters };
+    delete rest.created;
+    savedFilters = rest;
+    saveFiltersToStorage(savedFilters);
+    updateHasDefault();
+    resetToAll();
+    const original = clearBtn.textContent;
+    clearBtn.textContent = 'Cleared';
+    setTimeout(() => { clearBtn.textContent = original; }, 1000);
+  });
+
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.filter-panel').forEach(p => { if (p !== panel) p.classList.add('hidden'); });
+    panel.classList.toggle('hidden');
+  });
+
+  function setFrom(epoch){
+    fromInput.value = fmtTimeInputValue(epoch);
+    fromInput.classList.remove('invalid');
+    applyInputs();
+  }
+
+  function setTo(epoch){
+    toInput.value = fmtTimeInputValue(epoch);
+    toInput.classList.remove('invalid');
+    applyInputs();
+  }
+
+  return { wrap, setFrom, setTo };
+}
+
+// Priority: an explicitly saved localStorage default for this field (never
+// for pid, which is excluded from that system), then — for pid specifically
+// — the last pid seen in the file. Returns undefined ("everything") if
+// neither applies. Used both by rebuildHeader (for a visible column) and by
+// parseLog (to pre-apply the same default to a column that starts hidden).
+function computeDefaultSelection(field, values){
+  const savable = field !== 'process';
+  const saved = savable ? savedFilters[field] : undefined;
+  if (Array.isArray(saved)){
+    const intersect = saved.filter(v => values.includes(v));
+    if (intersect.length) return intersect;
+  }
+  if (field === 'process' && lastPidKey !== null && values.includes(lastPidKey)){
+    return [lastPidKey];
+  }
+  return undefined;
+}
+
+function rebuildHeader(){
+  // Preserve any active (narrowed) filter for a column that's about to be
+  // hidden, so hiding it doesn't silently drop its filtering effect.
+  columnFilters.forEach((api, field) => {
+    if (visibleColumns.has(field)) return;
+    if (api.selected.size !== api.allValues.length){
+      hiddenActiveFilters.set(field, { selected: new Set(api.selected), allValues: api.allValues.slice() });
+    } else {
+      hiddenActiveFilters.delete(field); // was "everything selected" — nothing to preserve
+    }
+  });
+
+  headRow.innerHTML = '';
+  columnFilters.clear();
+
+  columnOrder.forEach(field => {
+    if (!visibleColumns.has(field)) return;
+    const meta = FIELD_META[field] || {};
+    const th = document.createElement('th');
+    // Message is the one column meant to absorb all leftover space. Every
+    // other column needs SOME declared width under table-layout:fixed, or
+    // it splits the leftover space evenly with Message regardless of how
+    // little content it actually has (e.g. a short custom "commit" field
+    // would otherwise claim as much room as the message text itself).
+    if (meta.width){
+      th.style.width = meta.width;
+    } else if (field !== 'message'){
+      th.style.width = '140px';
+    }
+
+    if (field === '__elapsed'){
+      th.appendChild(buildElapsedThresholdColumn());
+    } else if (field === 'message'){
+      th.appendChild(buildMessageSearchColumn());
+    } else if (meta.textual){
+      th.textContent = meta.label || field;
+      th.classList.add('th-text');
+    } else if (field === 'created'){
+      const timeRangeWidget = buildTimeRangeColumn();
+      timeRangeApi = timeRangeWidget;
+      th.appendChild(timeRangeWidget.wrap);
+    } else {
+      const savable = field !== 'process'; // pid filters are never saved/restored
+      const colorizable = field === 'process' || field === 'thread_native';
+      const isPid = field === 'process';
+      const dropdown = buildFilterDropdownDOM(prettyLabel(field), { withSave: savable, withColorize: colorizable, withAutoSelectNew: isPid });
+      th.appendChild(dropdown);
+      const api = attachFilterBehavior(dropdown, { onChange: render });
+
+      const counts = fieldValueCounts.get(field) || new Map();
+      const values = field === '__level'
+        ? LEVELS.slice()
+        : sortValues(fieldValueOrder.get(field) || []);
+
+      // Priority: a filter preserved from when this column was hidden, then
+      // an explicitly saved default (never for pid), then (for pid
+      // specifically) the last pid seen in the file, then "all".
+      let defaultSelected;
+      const restored = hiddenActiveFilters.get(field);
+      if (restored){
+        defaultSelected = [...restored.selected].filter(v => values.includes(v));
+        hiddenActiveFilters.delete(field); // now live again via this visible column
+      } else {
+        defaultSelected = computeDefaultSelection(field, values);
+      }
+
+      api.setValues(values, counts, defaultSelected, (v, c) => renderValueFilterRow(field, v, c));
+      columnFilters.set(field, api);
+
+      const filterBtn = dropdown.querySelector('.filter-btn');
+      const saveBtn = dropdown.querySelector('.fp-save');
+      const clearBtn = dropdown.querySelector('.fp-clear');
+
+      function updateHasDefault(){
+        const isSaved = savable && Array.isArray(savedFilters[field]) && savedFilters[field].length > 0;
+        filterBtn.classList.toggle('has-default', isSaved);
+        filterBtn.title = isSaved ? "This column has a saved default filter (border highlighted). Use \"Clear default\" to remove it." : '';
+        if (clearBtn) clearBtn.disabled = !isSaved;
+      }
+      updateHasDefault();
+
+      if (saveBtn){
+        saveBtn.addEventListener('click', () => {
+          savedFilters = { ...savedFilters, [field]: [...api.selected] };
+          saveFiltersToStorage(savedFilters);
+          updateHasDefault();
+          const original = saveBtn.textContent;
+          saveBtn.textContent = 'Saved ✓';
+          setTimeout(() => { saveBtn.textContent = original; }, 1000);
+        });
+      }
+
+      if (clearBtn){
+        clearBtn.addEventListener('click', () => {
+          if (clearBtn.disabled) return;
+          const rest = { ...savedFilters };
+          delete rest[field];
+          savedFilters = rest;
+          saveFiltersToStorage(savedFilters);
+          updateHasDefault();
+          // Go back to true "everything" — recomputed from scratch, so it
+          // naturally includes any new values that show up in future files.
+          dropdown.querySelector('.fp-all').click();
+          const original = clearBtn.textContent;
+          clearBtn.textContent = 'Cleared';
+          setTimeout(() => { clearBtn.textContent = original; }, 1000);
+        });
+      }
+
+      if (colorizable){
+        const colorizeCheckbox = dropdown.querySelector('.fp-colorize-checkbox');
+        colorizeCheckbox.checked = !colorizeOff.has(field);
+        colorizeCheckbox.addEventListener('change', () => {
+          if (colorizeCheckbox.checked) colorizeOff.delete(field);
+          else colorizeOff.add(field);
+          saveColorizeOffToStorage(colorizeOff);
+          render();
+        });
+      }
+
+      if (isPid){
+        wirePidAutoSelectCheckboxes(dropdown);
+      }
+    }
+    headRow.appendChild(th);
+  });
+
+  const iconTh = document.createElement('th');
+  iconTh.style.width = '36px';
+  headRow.appendChild(iconTh);
+
+  renderHiddenFilterChips();
+}
+
+let fieldValueCounts = new Map(); // fieldName -> Map<key, count>
+let fieldValueOrder = new Map();  // fieldName -> [keys in first-seen order]
+let lastPidKey = null;            // last "process" value seen, in file order
+let lastCreatedForElapsed = null; // last valid "created" timestamp seen, for the __elapsed virtual column
+
+function touch(field, rawValue){
+  const key = toKey(rawValue);
+  if (key === null) return;
+  if (!fieldValueCounts.has(field)){
+    fieldValueCounts.set(field, new Map());
+    fieldValueOrder.set(field, []);
+  }
+  const counts = fieldValueCounts.get(field);
+  if (!counts.has(key)) fieldValueOrder.get(field).push(key);
+  counts.set(key, (counts.get(key) || 0) + 1);
+}
+
+// Parses raw log text into entry objects, updating the global field-stat
+// maps (fieldValueCounts/fieldValueOrder/lastPidKey) as a side effect.
+// Used both for a full file load and for incremental "Watch" mode chunks.
+function parseLinesToEntries(text){
+  const lines = text.split('\n');
+  const newEntries = [];
+  const discovered = new Set();
+
+  for (const line of lines){
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      const obj = JSON.parse(trimmed);
+      if (obj.levelname !== undefined){
+        obj.__level = LEVEL_OVERRIDES[obj.levelno] !== undefined ? LEVEL_OVERRIDES[obj.levelno] : obj.levelname;
+      }
+      if (typeof obj.created === 'number'){
+        if (lastCreatedForElapsed !== null){
+          obj.__elapsed = obj.created - lastCreatedForElapsed;
+        }
+        lastCreatedForElapsed = obj.created;
+      }
+      if (obj.pathname && (obj.lineno !== undefined && obj.lineno !== null)){
+        const path = String(obj.pathname).startsWith('/') ? obj.pathname : '/' + obj.pathname;
+        obj.__vscode = `vscode://file${path}:${obj.lineno}`;
+      }
+      if (obj.test && typeof obj.test.canonical_tag === 'string'){
+        obj.__test = obj.test.canonical_tag;
+      }
+      newEntries.push(obj);
+      Object.keys(obj).forEach(k => {
+        discovered.add(k);
+        touch(k, obj[k]);
+      });
+      if (obj.process !== undefined && obj.process !== null){
+        lastPidKey = toKey(obj.process);
+      }
+    } catch (e) {
+      // keep unparsable lines as raw text entries
+      newEntries.push({ __raw: trimmed });
+    }
+  }
+  return { newEntries, discoveredFields: discovered };
+}
+
+function parseLog(text){
+  entries = [];
+  fieldValueCounts = new Map();
+  fieldValueOrder = new Map();
+  lastPidKey = null;
+  lastCreatedForElapsed = null;
+  timeRangeInitializedForThisFile = false;
+  hiddenActiveFilters = new Map();
+
+  const { newEntries, discoveredFields } = parseLinesToEntries(text);
+  entries = newEntries;
+
+  const known = FIELD_ORDER.filter(f => discoveredFields.has(f));
+  const unknown = [...discoveredFields].filter(f => !FIELD_META[f]).sort();
+  allFields = [...known, ...unknown];
+
+  // User-defined column order takes priority; any field not in it yet
+  // (new to this file, or never manually reordered) is appended in its
+  // natural default position rather than always landing at the very end.
+  const savedOrder = loadColumnOrder();
+  if (savedOrder && savedOrder.length){
+    const kept = savedOrder.filter(f => allFields.includes(f));
+    const missing = allFields.filter(f => !kept.includes(f));
+    columnOrder = [...kept, ...missing];
+  } else {
+    columnOrder = [...allFields];
+  }
+
+  pidColorMap = buildIdColorMap('process');
+  threadColorMap = buildIdColorMap('thread_native');
+
+  const savedColumns = loadSavedColumns();
+  const savedVisible = savedColumns ? savedColumns.filter(f => allFields.includes(f)) : [];
+  const defaultVisible = savedVisible.length
+    ? savedVisible
+    : DEFAULT_VISIBLE.filter(f => allFields.includes(f));
+  visibleColumns = new Set(defaultVisible.length ? defaultVisible : allFields.slice(0, 4));
+
+  columnsFilter.setValues(columnOrder, new Map(), [...visibleColumns], renderColumnPickerRow);
+  enableColumnDragReorder();
+  attachRenameHandlers();
+
+  // A column's default filter (saved default, or "last pid" for pid) should
+  // apply whether or not the column is currently visible — otherwise hiding
+  // a column and reloading silently drops that filtering behavior, since
+  // the default logic normally only runs while building that column's own
+  // dropdown. Pre-apply it here for anything that starts out hidden.
+  if (!visibleColumns.has('created')){
+    const saved = savedFilters.created;
+    if (saved && typeof saved === 'object' && !Array.isArray(saved)){
+      timeRange = { from: saved.from ?? null, to: saved.to ?? null };
+    } else {
+      timeRange = { from: null, to: null };
+    }
+    timeRangeInitializedForThisFile = true;
+  }
+  allFields.forEach(field => {
+    const meta = FIELD_META[field] || {};
+    if (meta.textual || field === 'created' || visibleColumns.has(field)) return;
+    const values = filterValuesFor(field);
+    const def = computeDefaultSelection(field, values);
+    if (def !== undefined){
+      hiddenActiveFilters.set(field, { selected: new Set(def), allValues: values.slice() });
+    }
+  });
+
+  rebuildHeader();
+  dropzone.classList.add('hidden');
+  wrap.classList.add('visible');
+  render();
+}
+
+// Merges newly-appended lines into the already-loaded data WITHOUT resetting
+// visible columns or active filter selections — used by Watch mode so a
+// live-tailed view doesn't keep snapping back to defaults every poll.
+function applyIncrementalText(text){
+  const { newEntries, discoveredFields } = parseLinesToEntries(text);
+  if (!newEntries.length) return;
+
+  entries.push(...newEntries);
+
+  let newFieldsAppeared = false;
+  discoveredFields.forEach(f => {
+    if (!allFields.includes(f)){
+      allFields.push(f);
+      columnOrder.push(f);
+      newFieldsAppeared = true;
+    }
+  });
+
+  pidColorMap = buildIdColorMap('process');
+  threadColorMap = buildIdColorMap('thread_native');
+
+  // Refresh each existing filter's value list/counts in place. A filter that
+  // was previously "everything selected" stays that way (new values are
+  // included automatically); a deliberately narrowed filter otherwise stays
+  // exactly as narrowed — except pid, where newly-seen pids join the current
+  // selection automatically unless "Auto-select new pids" is unchecked.
+  columnFilters.forEach((api, field) => {
+    const counts = fieldValueCounts.get(field) || new Map();
+    const values = filterValuesFor(field);
+    const previousAllValues = api.allValues;
+    const wasEverything = api.selected.size > 0 && api.selected.size === previousAllValues.length;
+
+    let nextSelected;
+    if (wasEverything){
+      nextSelected = undefined; // stays "everything" — naturally covers new values too
+    } else if (field === 'process' && autoSelectNewPids){
+      const newlyAppeared = values.filter(v => !previousAllValues.includes(v));
+      nextSelected = (exclusiveNewPid && newlyAppeared.length)
+        ? [...newlyAppeared]
+        : [...api.selected, ...newlyAppeared];
+    } else {
+      nextSelected = [...api.selected].filter(v => values.includes(v));
+    }
+
+    api.setValues(values, counts, nextSelected, (v, c) => renderValueFilterRow(field, v, c));
+  });
+
+  // Same refresh, for a field whose column is currently hidden — its state
+  // lives in hiddenActiveFilters instead of columnFilters, but it still
+  // needs new values folded in the same way (in particular, pid auto-select
+  // must work whether or not the Pid column happens to be visible).
+  hiddenActiveFilters.forEach((state, field) => {
+    const values = filterValuesFor(field);
+
+    let nextSelected;
+    if (field === 'process' && autoSelectNewPids){
+      const newlyAppeared = values.filter(v => !state.allValues.includes(v));
+      nextSelected = (exclusiveNewPid && newlyAppeared.length)
+        ? new Set(newlyAppeared)
+        : new Set([...state.selected, ...newlyAppeared]);
+    } else {
+      nextSelected = new Set([...state.selected].filter(v => values.includes(v)));
+    }
+
+    hiddenActiveFilters.set(field, { selected: nextSelected, allValues: values.slice() });
+  });
+  // Rebuilding this bar destroys and recreates every chip, including a
+  // currently-open one — fine when it's a direct result of the user's own
+  // action (removing a filter, showing a column), but not here, where a
+  // background Watch-mode poll would otherwise slam an open chip shut out
+  // from under the user. Skip the rebuild while any chip panel is open; the
+  // next real trigger (closing it, or a structural change) will catch up.
+  if (!hiddenFiltersBar.querySelector('.filter-panel:not(.hidden)')){
+    renderHiddenFilterChips();
+  }
+
+  if (newFieldsAppeared){
+    columnsFilter.setValues(columnOrder, new Map(), [...visibleColumns], renderColumnPickerRow);
+    enableColumnDragReorder();
+    attachRenameHandlers();
+  }
+
+  render();
+}
+
+// Matches Python traceback lines like:
+//   File "/home/xdo/src/19.0/odoo/odoo/addons/base/tests/test_acl.py", line 17, in setUpClass
+// and turns the "File ..., line N" portion into a vscode:// link, while
+// safely escaping everything else around it (including any other matches).
+const TRACEBACK_LINE_RE = /File "([^"]+)", line (\d+)/g;
+
+function linkifyTracebacks(text){
+  let result = '';
+  let lastIndex = 0;
+  TRACEBACK_LINE_RE.lastIndex = 0;
+  let match;
+  while ((match = TRACEBACK_LINE_RE.exec(text)) !== null){
+    const [full, path, lineno] = match;
+    result += escapeHtml(text.slice(lastIndex, match.index));
+    const normalizedPath = path.startsWith('/') ? path : '/' + path;
+    const href = `vscode://file${normalizedPath}:${lineno}`;
+    result += `<a class="tb-link" href="${escapeHtml(href)}" title="Open in VS Code">${escapeHtml(full)}</a>`;
+    lastIndex = match.index + full.length;
+  }
+  result += escapeHtml(text.slice(lastIndex));
+  return result;
+}
+
+function formatCell(field, value, e){
+  if (value === undefined || value === null) return '';
+  const meta = FIELD_META[field];
+  if (meta && meta.format) return meta.format(value, e);
+  if (typeof value === 'object') return escapeHtml(JSON.stringify(value));
+  return escapeHtml(String(value));
+}
+
+function cellClass(field){
+  if (field === 'message') return collapseMessages ? 'msg truncated clickable' : 'msg expanded';
+  if (field === 'created') return 'time';
+  if (field === 'name') return 'logger';
+  if (field === '__vscode') return 'vscode-cell';
+  return '';
+}
+
+function buildRowPair(e, columns){
+  const frag = document.createDocumentFragment();
+
+  const row = document.createElement('tr');
+  row.className = 'row' + ((e.__level || e.levelname) ? ' lvl-' + (e.__level || e.levelname) : '');
+
+  const cellsHtml = columns.map(field => {
+    const cls = cellClass(field);
+    const clsAttr = cls ? ` class="${cls}"` : '';
+    const titleAttr = (field === 'message' && collapseMessages) ? ' title="Click to show the full message"' : '';
+    if (e.__raw){
+      return field === 'message' ? `<td${clsAttr}${titleAttr}>${linkifyTracebacks(e.__raw)}</td>` : `<td${clsAttr}></td>`;
+    }
+    return `<td${clsAttr}${titleAttr}>${formatCell(field, e[field], e)}</td>`;
+  }).join('');
+
+  const expandCell = e.__raw ? '' : `<button type="button" class="expand-btn" title="Show details">▸</button>`;
+  row.innerHTML = cellsHtml + `<td class="expand">${expandCell}</td>`;
+  row._entry = e; // read by the delegated click/contextmenu handlers below
+
+  const detail = document.createElement('tr');
+  detail.className = 'detail hidden';
+  const td = document.createElement('td');
+  td.colSpan = columns.length + 1;
+  detail.appendChild(td);
+  // Detail JSON is built lazily on first expand (see the tbody click
+  // delegate) instead of eagerly for every row on every render — with
+  // thousands of rows, most never get expanded, so this saves a lot of
+  // JSON.stringify + escaping work that would otherwise happen for nothing.
+
+  frag.appendChild(row);
+  frag.appendChild(detail);
+  return frag;
+}
+
+// Delegated handlers, attached once (not per row) so re-rendering thousands
+// of rows doesn't mean creating/destroying thousands of closures each time.
+tbody.addEventListener('click', e => {
+  const expandBtn = e.target.closest('.expand-btn');
+  if (expandBtn){
+    const row = expandBtn.closest('tr.row');
+    const detail = row.nextElementSibling;
+    const detailTd = detail.querySelector('td');
+    if (!detailTd.dataset.rendered){
+      const { __level, __elapsed, __vscode, __test, ...rawEntry } = row._entry;
+      detailTd.innerHTML = `<pre>${escapeHtml(JSON.stringify(rawEntry, null, 2))}</pre>`;
+      detailTd.dataset.rendered = '1';
+    }
+    const nowOpen = detail.classList.toggle('hidden') === false;
+    expandBtn.classList.toggle('open', nowOpen);
+    expandBtn.textContent = nowOpen ? '▾' : '▸';
+    return;
+  }
+
+  if (e.target.closest('a.tb-link')) return; // let the link navigate, don't also toggle the cell
+
+  const copyBtn = e.target.closest('.test-copy-btn');
+  if (copyBtn){
+    const text = copyBtn.dataset.copy;
+    copyToClipboard(text).then(() => {
+      const original = copyBtn.textContent;
+      copyBtn.textContent = '✓';
+      setTimeout(() => { copyBtn.textContent = original; }, 1000);
+    }).catch(() => {
+      const original = copyBtn.textContent;
+      copyBtn.textContent = '✗';
+      copyBtn.title = 'Copy failed — select and copy manually: ' + text;
+      setTimeout(() => { copyBtn.textContent = original; }, 1500);
+    });
+    return;
+  }
+
+  const msgCell = e.target.closest('td.msg.clickable');
+  if (msgCell){
+    msgCell.classList.toggle('truncated');
+    msgCell.classList.toggle('expanded');
+  }
+});
+
+tbody.addEventListener('contextmenu', e => {
+  const timeCell = e.target.closest('td.time');
+  if (!timeCell) return;
+  const row = timeCell.closest('tr.row');
+  if (!row || !row._entry || typeof row._entry.created !== 'number') return;
+  e.preventDefault();
+  showRowContextMenu(e.clientX, e.clientY, row._entry.created);
+});
+
+function render(){
+  const q = searchQuery.toLowerCase();
+  const visibleCols = columnOrder.filter(f => visibleColumns.has(f));
+
+  const filtered = entries.filter(e => {
+    if (e.__raw) return q ? e.__raw.toLowerCase().includes(q) : true;
+
+    for (const [field, api] of columnFilters){
+      if (!api.allValues.length) continue;
+      const v = e[field];
+      if (v === undefined || v === null) continue; // can't classify, let it through
+      if (!api.selected.has(toKey(v))) return false;
+    }
+
+    for (const [field, state] of hiddenActiveFilters){
+      const v = e[field];
+      if (v === undefined || v === null) continue;
+      if (!state.selected.has(toKey(v))) return false;
+    }
+
+    if (timeRange.from !== null || timeRange.to !== null){
+      const t = e.created;
+      if (typeof t === 'number'){
+        if (timeRange.from !== null && t < timeRange.from) return false;
+        if (timeRange.to !== null && t > timeRange.to) return false;
+      }
+    }
+
+    if (q){
+      const hay = `${e.message||''} ${e.name||''} ${e.module||''} ${e.funcName||''} ${e.dbname||''}`.toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+
+  stats.innerHTML = `<b>${filtered.length}</b> / ${entries.length} lines`;
+
+  tbody.innerHTML = '';
+  const frag = document.createDocumentFragment();
+  filtered.forEach(e => frag.appendChild(buildRowPair(e, visibleCols)));
+
+  // While following, surface the actual last line even if the current
+  // filters would otherwise hide it — a quick, low-key "yes, it's still
+  // running" signal, distinct from the real (filtered) rows above it.
+  if (followEnabled && entries.length){
+    const lastEntry = entries[entries.length - 1];
+    const alreadyShown = filtered.length > 0 && filtered[filtered.length - 1] === lastEntry;
+    if (!alreadyShown){
+      const ghost = buildRowPair(lastEntry, visibleCols);
+      ghost.querySelector('tr.row').classList.add('pinned-last');
+      frag.appendChild(ghost);
+    }
+  }
+
+  tbody.appendChild(frag);
+
+  if (followEnabled) scrollToBottom();
+  updateWatchSuggestButton();
+
+  // The overflow-indicator pass reads layout for every truncated cell, which
+  // gets expensive with thousands of rows. It's purely cosmetic, so defer it
+  // a frame rather than block the filter/search click that triggered this
+  // render — rows appear immediately, the accent dots settle in just after.
+  requestAnimationFrame(markOverflowingMessages);
+}
+
+function markOverflowingMessages(){
+  if (!collapseMessages) return; // no .truncated cells exist outside collapse mode
+  const cells = tbody.querySelectorAll('td.msg.truncated');
+  if (!cells.length) return;
+  // Read all layout values first, then write all classes — interleaving
+  // reads and writes in the same loop forces a synchronous reflow per
+  // element ("layout thrashing"), which gets very slow with many rows.
+  const overflowing = new Array(cells.length);
+  cells.forEach((td, i) => { overflowing[i] = td.scrollWidth > td.clientWidth + 1; });
+  cells.forEach((td, i) => { td.classList.toggle('overflowing', overflowing[i]); });
+}
+
+window.addEventListener('resize', markOverflowingMessages);
+
+</script>
+
+</body>
+</html>

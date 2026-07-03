@@ -1,0 +1,23 @@
+server {
+    listen       127.0.0.1:80;
+    server_name  logs;
+
+    root  {VIEWERPATH};
+
+    location / {
+        try_files $uri $uri/ =404;
+    }
+
+    location /api/files/ {
+        index nonexistent.placeholder;
+        alias {LOGPATH};
+        autoindex on;
+        autoindex_format json;
+    }
+
+    location ~ .json$ {
+        root {LOGPATH};
+        default_type application/json;
+        gzip off;
+    }
+}

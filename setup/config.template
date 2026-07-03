@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "keep_odoo_default": true,
+  "filters": {
+    "git": {
+      "()": "local_logging.git_filter.GitFilter"
+    }
+  },
+  "formatters": {
+    "json": { "()": "odoo.logging.JSONFormatter" }
+  },
+  "handlers": {
+    "json": {
+      "class": "logging.handlers.WatchedFileHandler",
+      "formatter": "json",
+      "filename": "/home/{USER}/logs/odoo_log.json",
+      "level": "INFO",
+      "filters": ["git"]
+    }
+  },
+  "root": { "handlers": ["json"]}
+}
